@@ -28,8 +28,8 @@ on:
           - 'true'
           - 'false'
   schedule:
-    # Every trading day at 15:30 CST (07:30 UTC)
-    - cron: '30 7 * * 1-5'
+    # Every trading day at 20:30 CST (12:30 UTC)
+    - cron: '30 12 * * 1-5'
 
 jobs:
   pipeline:
