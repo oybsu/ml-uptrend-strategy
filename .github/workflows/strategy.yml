@@ -79,6 +79,17 @@ jobs:
         if: ${{ github.event_name == 'schedule' || inputs.run_scan == 'true' }}
         run: python run.py scan
 
+      - name: Publish scan report
+        if: always()
+        run: |
+          REPORT="signals/scan_full_a_report.html"
+          if [ -f "$REPORT" ]; then
+            echo "## 📊 ML主升浪扫描报告" >> $GITHUB_STEP_SUMMARY
+            cat "$REPORT" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "⚠️ 未找到扫描报告" >> $GITHUB_STEP_SUMMARY
+          fi
+
       - name: Upload signals
         if: always()
         uses: actions/upload-artifact@v4
