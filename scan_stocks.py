@@ -13,22 +13,14 @@ warnings.filterwarnings('ignore')
 BASE_DIR = Path(__file__).parent
 sys.path.insert(0, str(BASE_DIR))
 
-from data_loader import get_stock_data, get_stock_pool_index
+from data_loader import get_stock_data
 from factor_engine import calc_all_factors
 from model_trainer import load_latest_model
 from signal_generator import predict_stock
 
-import efinance as ef
-
 
 def get_stock_name(code):
-    """获取股票名称"""
-    try:
-        df = ef.stock.get_quote_history(code, klt=101, fqt=1)
-        if df is not None and len(df) > 0 and '股票名称' in df.columns:
-            return str(df['股票名称'].iloc[0])
-    except Exception:
-        pass
+    """获取股票名称(返回空，qlib不提供名称)"""
     return ''
 
 

@@ -16,7 +16,7 @@ pip install -r requirements.txt
 # Step 1: 训练模型（需标注文件 data/annotations.csv）
 python run.py train
 
-# Step 2: 下载全A数据（pytdx直连通达信，8连接并行，约5-10分钟）
+# Step 2: 下载全A数据（从qlib本地数据转换，首次需下载约530MB数据包）
 python run.py download
 
 # Step 3: 全A扫描（约30分钟，输出TOP50+即将启动30只）
@@ -48,7 +48,7 @@ python run.py
 | 命令 | 说明 | 耗时 |
 |------|------|------|
 | `train` | 用标注数据训练LightGBM模型 | 2-5min |
-| `download` | 批量下载全A日线数据(pytdx) | 5-10min(首次) |
+| `download` | 批量下载全A日线数据(qlib) | 5-10min(首次) |
 | `scan` | 全A扫描，输出主升浪排名 | 30min |
 | `update` | 一键更新(download+scan) | 35-40min |
 | `predict <代码>` | 预测单只股票 | 1-3s |
@@ -56,13 +56,15 @@ python run.py
 
 ## 数据源
 
-优先级: **pytdx**(快) → **baostock**(稳) → **efinance**(兜底)
+**qlib** (chenditc/investment_data): 社区维护的A股数据，GitHub Release托管，海外可访问，每日自动更新。
 
-| 数据源 | 速度 | 特点 |
-|--------|------|------|
-| pytdx | 极快(全A 5-10min) | 直连通达信服务器，无需注册，需自行计算复权 |
-| baostock | 慢(全A约40min) | 已复权数据，稳定可靠，每日17:00后更新 |
-| efinance | 不稳定 | 东方财富接口，仅作兜底 |
+| 特点 | 说明 |
+|------|------|
+| 数据来源 | chenditc/investment_data GitHub Release |
+| 数据量 | 约530MB tar.gz |
+| 更新频率 | 社区每日自动更新 |
+| 访问性 | 海外服务器可访问，CI友好 |
+| 离线 | 下载后纯离线读取 |
 
 ## 目录结构
 
@@ -71,7 +73,7 @@ ml_uptrend_strategy/
   run.py                  统一入口（日常只用这个）
   config.json             全局配置
   requirements.txt        Python依赖
-  data_loader.py          数据加载(pytdx+baostock+efinance+缓存)
+  data_loader.py          数据加载(qlib+缓存)
   factor_engine.py        123个技术因子(6大类)
   label_generator.py      标签生成
   model_trainer.py        LightGBM训练
@@ -111,12 +113,11 @@ stock_code,start_date,end_date,note
 
 `config.json` 关键参数：
 
-- `data.source`: 数据源(pytq/baostock/efinance)
+- `data.source`: 数据源(qlib)
 - `data.end_date`: 设为 `"auto"` 自动取当天，或指定如 `"20260630"`
 - `signal.buy_threshold`: 买入概率阈值(默认0.45)
 - `signal.sell_threshold`: 卖出概率阈值(默认0.30)
 - `scan.top_n`: 输出TOP N主升浪股票(默认50)
-- `scan.download_workers`: 并行连接数(默认8，pytdx推荐8-10)
 
 ## 模型信息
 
@@ -128,20 +129,18 @@ stock_code,start_date,end_date,note
 
 ## 注意事项
 
-1. pytdx直连通达信服务器，国内网络一般都能连上，无需注册
-2. 首次download约5-10分钟(pytdx)，后续增量下载更快
-3. pytdx下载失败的股票会自动用baostock补充(慢但稳)
-4. scan需要先download完成，否则大量股票无数据会失败
-5. Windows终端中文可能乱码，HTML报告中文正常，建议看HTML
-6. 如遇网络超时，重新运行同一命令即可（有缓存不会重复下载）
-7. 复权方式默认后复权(hfq)，与模型训练一致，不建议更改
+1. 首次download需从GitHub下载约530MB的qlib数据包，后续有缓存无需重复下载
+2. scan需要先download完成，否则大量股票无数据会失败
+3. Windows终端中文可能乱码，HTML报告中文正常，建议看HTML
+4. 如遇网络超时，重新运行同一命令即可（有缓存不会重复下载）
+5. 复权方式默认后复权(hfq)，与模型训练一致，不建议更改
 
 ## GitHub Actions 自动化
 
 项目已配置 GitHub Actions，支持手动触发和定时执行：
 
 - **手动触发**：在 GitHub 仓库 → Actions → 选择 "ML Uptrend Strategy Pipeline" → Run workflow，可选 download/train/scan 步骤
-- **定时执行**：每交易日 15:30 CST 自动运行完整流水线
+- **定时执行**：每交易日 20:30 CST 自动运行完整流水线
 - **结果下载**：信号和模型文件上传为 Artifacts，保留30天
 
 配置文件：`.github/workflows/strategy.yml`

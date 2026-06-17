@@ -69,8 +69,6 @@ jobs:
       - name: Download data
         if: ${{ github.event_name == 'schedule' || inputs.run_download == 'true' || github.event_name == 'workflow_dispatch' }}
         timeout-minutes: 30
-        env:
-          DATA_SOURCE: qlib
         run: python run.py download
 
       - name: Train model

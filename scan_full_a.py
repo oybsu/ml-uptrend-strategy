@@ -1,7 +1,7 @@
 """全A市场扫描脚本 - 扫描全部A股，选出主升浪股票
 
 优化策略：
-1. 先批量下载数据（并行）
+1. 先批量下载数据（qlib离线转换）
 2. 再逐只计算因子和预测
 3. 已有缓存的跳过下载
 """
@@ -13,25 +13,24 @@ import warnings
 import numpy as np
 import pandas as pd
 from pathlib import Path
-from concurrent.futures import ThreadPoolExecutor, as_completed
 
 warnings.filterwarnings('ignore')
 
 BASE_DIR = Path(__file__).parent
 sys.path.insert(0, str(BASE_DIR))
 
-from data_loader import get_stock_data
+from data_loader import get_stock_data, qlib_get_stock_list
 from factor_engine import calc_all_factors
 from model_trainer import load_latest_model
 from signal_generator import predict_stock
 
-import efinance as ef
-
 
 def get_all_a_stocks():
-    """获取全部A股股票代码列表（排除ST、退市、北交所）"""
-    print("获取全部A股列表...", flush=True)
+    """获取全部A股股票代码列表（排除ST、退市、北交所）
     
+    从qlib数据获取，fallback到CSV缓存
+    """
+    # 优先CSV缓存
     csv_file = BASE_DIR / 'data' / 'full_a_stocks.csv'
     if csv_file.exists():
         df = pd.read_csv(csv_file, encoding='utf-8-sig', dtype={'code': str})
@@ -40,138 +39,17 @@ def get_all_a_stocks():
         print(f"从本地CSV读取: {len(name_map)} 只", flush=True)
         return name_map
     
-    # 在线获取
-    try:
-        import requests as req
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
-        all_stocks = []
-        page = 1
-        while True:
-            url = f'https://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/Market_Center.getHQNodeData?page={page}&num=80&sort=code&asc=1&node=hs_a&symbol=&_s_r_a=auto'
-            resp = req.get(url, headers=headers, timeout=30)
-            if resp.status_code != 200 or len(resp.text) < 10:
-                break
-            data = json.loads(resp.text)
-            if not data or len(data) == 0:
-                break
-            all_stocks.extend(data)
-            page += 1
-        
-        filtered = {}
-        for s in all_stocks:
-            code = s.get('code', '')
-            name = s.get('name', '')
-            if len(code) != 6:
-                continue
-            if code.startswith(('8', '4', '9')):
-                continue
-            if 'ST' in str(name).upper() or '退' in str(name):
-                continue
-            filtered[code] = name
-        
-        print(f"在线获取: {len(filtered)} 只", flush=True)
-        df = pd.DataFrame(list(filtered.items()), columns=['code', 'name'])
+    # 从qlib获取
+    print("从qlib获取全A列表...", flush=True)
+    name_map = qlib_get_stock_list()
+    if name_map:
+        df = pd.DataFrame(list(name_map.items()), columns=['code', 'name'])
         df.to_csv(csv_file, index=False, encoding='utf-8-sig')
-        return filtered
-    except Exception as e:
-        print(f"获取失败: {e}", flush=True)
+        print(f"qlib获取成功: {len(name_map)} 只", flush=True)
+        return name_map
     
+    print("获取全A列表失败！")
     return {}
-
-
-def download_stock_data_bs(bs_obj, code, cache_dir, max_retries=3):
-    """用baostock下载单只股票数据到缓存，返回(code, success, status)"""
-    cache_file = Path(cache_dir) / f"{code}_hfq.parquet"
-    if cache_file.exists():
-        return (code, True, 'cached')
-    
-    # 转换代码格式: 000001 -> sz.000001, 600000 -> sh.600000
-    if code.startswith('6'):
-        bs_code = f'sh.{code}'
-    else:
-        bs_code = f'sz.{code}'
-    
-    for attempt in range(max_retries):
-        try:
-            rs = bs_obj.query_history_k_data_plus(
-                bs_code,
-                'date,open,high,low,close,volume,amount',
-                start_date='2024-01-01',
-                end_date='2026-06-16',
-                frequency='d',
-                adjustflag='1'  # 后复权，与efinance fqt=2一致
-            )
-            data = []
-            while (rs.error_code == '0') and rs.next():
-                data.append(rs.get_row_data())
-            
-            if not data:
-                return (code, False, 'no_data')
-            
-            df = pd.DataFrame(data, columns=rs.fields)
-            for c in ['open', 'high', 'low', 'close', 'volume', 'amount']:
-                df[c] = pd.to_numeric(df[c], errors='coerce')
-            df['date'] = pd.to_datetime(df['date'])
-            df = df.dropna(subset=['close']).sort_values('date').reset_index(drop=True)
-            
-            if len(df) >= 120:
-                df.to_parquet(cache_file, index=False)
-                return (code, True, 'downloaded')
-            else:
-                return (code, False, 'too_short')
-        except Exception as e:
-            if attempt < max_retries - 1:
-                time.sleep(0.5)
-    
-    return (code, False, 'failed')
-
-
-def batch_download(stock_codes, cache_dir, max_workers=1):
-    """批量下载股票数据（用baostock，串行下载但比efinance快得多）"""
-    import baostock as bs
-    
-    cache_dir = Path(cache_dir)
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    
-    # 先检查哪些已有缓存
-    need_download = []
-    for code in stock_codes:
-        cache_file = cache_dir / f"{code}_hfq.parquet"
-        if not cache_file.exists():
-            need_download.append(code)
-    
-    if not need_download:
-        print(f"全部 {len(stock_codes)} 只已有缓存", flush=True)
-        return
-    
-    print(f"需下载: {len(need_download)} 只 (已有缓存: {len(stock_codes) - len(need_download)})", flush=True)
-    
-    # baostock登录
-    lg = bs.login()
-    if lg.error_code != '0':
-        print(f"baostock登录失败: {lg.error_msg}", flush=True)
-        return
-    
-    success = 0
-    fail = 0
-    start_time = time.time()
-    
-    for i, code in enumerate(need_download):
-        code_result, ok, status = download_stock_data_bs(bs, code, cache_dir)
-        if ok:
-            success += 1
-        else:
-            fail += 1
-        
-        if (i + 1) % 200 == 0:
-            elapsed = time.time() - start_time
-            speed = (i + 1) / elapsed
-            eta = (len(need_download) - i - 1) / speed / 60
-            print(f"下载进度: {i+1}/{len(need_download)} | 成功: {success} | 失败: {fail} | {speed:.1f}/s | ETA: {eta:.0f}min", flush=True)
-    
-    bs.logout()
-    elapsed = time.time() - start_time
-    print(f"下载完成: 成功 {success}, 失败 {fail}, 耗时 {elapsed/60:.1f}min", flush=True)
 
 
 def scan_single_stock(code, model, model_feature_names, cache_dir):
@@ -237,7 +115,7 @@ def scan_stocks_full_a(name_map, model=None, meta=None, exclude_codes=None,
     total = len(stock_codes)
     print(f"待扫描: {total} 只", flush=True)
     
-    # Step 1: 检查缓存（数据已通过batch_download.py下载）
+    # Step 1: 检查缓存（数据已通过run.py download下载）
     cached_count = len(list(cache_dir.glob('*.parquet')))
     print(f"\n=== 数据已就绪: {cached_count} 个缓存文件 ===", flush=True)
     

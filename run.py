@@ -2,15 +2,13 @@
 
 用法:
     python run.py train          # 用标注数据训练模型
-    python run.py download       # 批量下载全A数据
+    python run.py download       # 批量下载全A数据(qlib)
     python run.py scan           # 全A扫描(需先download)
     python run.py update         # 更新数据+扫描(一键运行)
     python run.py predict 000001 # 预测单只股票
     python run.py stocklist      # 更新全A股票列表
 
-数据源(通过环境变量DATA_SOURCE控制):
-    pytdx(默认): 通达信直连，国内快
-    qlib: GitHub托管数据，海外CI首选，纯离线读取
+数据源: qlib (chenditc/investment_data, GitHub托管，纯离线读取)
 """
 import sys
 import os
@@ -26,7 +24,7 @@ warnings.filterwarnings('ignore')
 BASE_DIR = Path(__file__).parent
 sys.path.insert(0, str(BASE_DIR))
 
-from data_loader import get_stock_data, load_annotations, pytdx_download_batch, pytdx_get_stock_list, qlib_download_batch, qlib_get_stock_list
+from data_loader import get_stock_data, load_annotations, qlib_download_batch, qlib_get_stock_list
 
 
 def get_end_date():
@@ -42,70 +40,31 @@ def get_end_date():
 def get_all_a_stocks():
     """获取全部A股股票代码列表(排除ST/退市/北交所)
     
-    DATA_SOURCE=qlib: 直接从qlib数据获取(海外CI首选)
-    默认: CSV缓存 → pytdx → 新浪API
+    从qlib数据获取股票列表
     """
-    data_source = os.environ.get('DATA_SOURCE', 'pytdx').lower()
-    
-    # qlib模式: 直接从qlib获取，不走CSV缓存
-    if data_source == 'qlib':
-        print("从qlib获取全A列表...", flush=True)
-        name_map = qlib_get_stock_list()
-        if name_map:
-            print(f"qlib获取成功: {len(name_map)} 只")
-            return name_map
-        print("qlib获取失败，fallback到CSV/pytdx...")
-    
-    # 非qlib模式: 优先CSV缓存
+    # 优先CSV缓存
     csv_file = BASE_DIR / 'data' / 'full_a_stocks.csv'
+    
+    # 从qlib获取
+    print("从qlib获取全A列表...", flush=True)
+    name_map = qlib_get_stock_list()
+    if name_map:
+        # 保存到CSV
+        df = pd.DataFrame(list(name_map.items()), columns=['code', 'name'])
+        df.to_csv(csv_file, index=False, encoding='utf-8-sig')
+        print(f"qlib获取成功: {len(name_map)} 只")
+        return name_map
+    
+    # fallback: CSV缓存
     if csv_file.exists():
         df = pd.read_csv(csv_file, encoding='utf-8-sig', dtype={'code': str})
         df['code'] = df['code'].astype(str).str.zfill(6)
         name_map = dict(zip(df['code'].tolist(), df['name'].tolist()))
-        return name_map
-
-    # 尝试pytdx获取
-    print("从pytdx获取全A列表...", flush=True)
-    name_map = pytdx_get_stock_list()
-    if name_map:
-        df = pd.DataFrame(list(name_map.items()), columns=['code', 'name'])
-        df.to_csv(csv_file, index=False, encoding='utf-8-sig')
-        print(f"pytdx获取成功: {len(name_map)} 只")
+        print(f"从CSV缓存读取: {len(name_map)} 只")
         return name_map
     
-    # fallback: 新浪API
-    print("pytdx获取失败，尝试新浪API...", flush=True)
-    import requests as req
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
-    all_stocks = []
-    page = 1
-    while True:
-        url = (f'https://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/'
-               f'Market_Center.getHQNodeData?page={page}&num=80&sort=code&asc=1&node=hs_a&symbol=&_s_r_a=auto')
-        resp = req.get(url, headers=headers, timeout=30)
-        if resp.status_code != 200 or len(resp.text) < 10:
-            break
-        data = json.loads(resp.text)
-        if not data:
-            break
-        all_stocks.extend(data)
-        page += 1
-
-    filtered = {}
-    for s in all_stocks:
-        code = s.get('code', '')
-        name = s.get('name', '')
-        if len(code) != 6 or code.startswith(('8', '4', '9')):
-            continue
-        if 'ST' in str(name).upper() or '退' in str(name):
-            continue
-        filtered[code] = name
-
-    if filtered:
-        df = pd.DataFrame(list(filtered.items()), columns=['code', 'name'])
-        df.to_csv(csv_file, index=False, encoding='utf-8-sig')
-        print(f"新浪API获取成功: {len(filtered)} 只")
-    return filtered
+    print("获取全A列表失败！")
+    return {}
 
 
 # ─── train ────────────────────────────────────────────────────────────
@@ -123,26 +82,19 @@ def cmd_train():
     print(f"标注: {len(annotations)} 只股票")
 
     # 下载数据
-    # 关键: pytdx缓存可能包含全量历史(~22000条/只)，必须按config.start_date截断
-    # 之前baostock默认只返回2024年以后数据(~600条/只)，所以没问题
+    # qlib模式: download步骤数据在scan_cache，train也用scan_cache
     with open(BASE_DIR / 'config.json', 'r', encoding='utf-8') as f:
         cfg = json.load(f)
     train_start_date = cfg['data'].get('start_date', '20240101')
     
     print("\n--- 下载标注股票数据 ---")
-    data_source = os.environ.get('DATA_SOURCE', 'pytdx').lower()
-    # qlib模式: download步骤数据在scan_cache，train也用scan_cache
-    if data_source == 'qlib':
-        train_cache_dir = BASE_DIR / 'data' / 'scan_cache'
-    else:
-        train_cache_dir = None  # get_stock_data会用默认的data/cache
+    train_cache_dir = BASE_DIR / 'data' / 'scan_cache'
     price_dict = {}
     failed = []
     for idx, row in annotations.iterrows():
         code = str(row['stock_code']).strip().zfill(6)
         name = str(row.get('note', '')).strip()
         print(f"  [{idx+1}/{len(annotations)}] {code} {name}...", end=' ', flush=True)
-        # 显式传入start_date，确保pytdx缓存全量数据也被正确截断
         df = get_stock_data(code, start_date=train_start_date, cache_dir=train_cache_dir)
         if df.empty:
             failed.append(code)
@@ -153,7 +105,6 @@ def cmd_train():
     print(f"成功: {len(price_dict)}, 失败: {len(failed)}")
 
     # 生成标签+计算因子
-    # get_stock_data已按config.start_date截断(20240101)，每只约600条，41只约24000行
     print("\n--- 计算因子和标签 ---")
     all_with_factors = []
     for code, price_df in price_dict.items():
@@ -193,12 +144,7 @@ def cmd_train():
 # ─── download ─────────────────────────────────────────────────────────
 
 def cmd_download():
-    """批量下载全A数据
-    
-    DATA_SOURCE=qlib: 从qlib本地数据转换(纯离线, CI首选)
-    默认: pytdx(通达信直连, 快) → baostock补充
-    """
-    data_source = os.environ.get('DATA_SOURCE', 'pytdx').lower()
+    """批量下载全A数据(从qlib本地数据转换)"""
     cache_dir = BASE_DIR / 'data' / 'scan_cache'
     cache_dir.mkdir(parents=True, exist_ok=True)
 
@@ -222,252 +168,19 @@ def cmd_download():
         cfg = json.load(f)
     start_date = cfg['data'].get('start_date', '20240101')
 
-    if data_source == 'qlib':
-        # qlib: GitHub托管数据，海外可访问，社区每日更新，纯离线读取
-        print(f"\n--- qlib数据源下载 ---")
-        print(f"数据源: qlib (chenditc/investment_data, GitHub托管)")
-        print(f"日期范围: {start_date} ~ {end_date}")
-        qlib_dir = os.environ.get('QLIB_DATA_DIR', None)
-        ok, fail = qlib_download_batch(
-            stock_codes=stock_codes,
-            start_date=start_date,
-            end_date=end_date,
-            cache_dir=cache_dir,
-            qlib_dir=qlib_dir,
-            adjust='hfq'
-        )
-    elif data_source in ('efinance', 'ef'):
-        # efinance: 东方财富HTTP接口，海外可访问，比baostock快
-        print(f"\n--- efinance直接下载 ---")
-        print(f"数据源: efinance (DATA_SOURCE=efinance)")
-        print(f"日期范围: {start_date} ~ {end_date}")
-        _efinance_batch_download(stock_codes, start_date, end_date, cache_dir)
-    elif data_source == 'baostock':
-        # baostock: 慢但稳定
-        print(f"\n--- baostock直接下载 ---")
-        print(f"数据源: baostock (DATA_SOURCE=baostock)")
-        print(f"日期范围: {start_date} ~ {end_date}")
-        _baostock_fallback_download(stock_codes, start_date, end_date, cache_dir)
-    else:
-        # 默认: pytdx主 + baostock补充
-        with open(BASE_DIR / 'config.json', 'r', encoding='utf-8') as f:
-            cfg = json.load(f)
-        num_connections = cfg.get('scan', {}).get('download_workers', 8)
-
-        print(f"\n--- pytdx多连接下载 ---")
-        print(f"数据源: pytdx(通达信直连)")
-        print(f"并行连接数: {num_connections}")
-        print(f"日期范围: {start_date} ~ {end_date}")
-        
-        ok, fail = pytdx_download_batch(
-            stock_codes=stock_codes,
-            start_date=start_date,
-            end_date=end_date,
-            cache_dir=cache_dir,
-            num_connections=num_connections,
-            adjust='hfq'
-        )
-        
-        # pytdx失败的股票，用baostock补充
-        if fail > 0:
-            # 找出仍缺失的
-            cached = set()
-            for f in os.listdir(cache_dir):
-                if f.endswith('.parquet'):
-                    cached.add(f.split('_')[0])
-            
-            still_need = [c for c in stock_codes if c not in cached]
-            if still_need:
-                print(f"\n--- baostock补充下载 {len(still_need)} 只 ---")
-                _baostock_fallback_download(still_need, start_date, end_date, cache_dir)
-
-
-def _efinance_batch_download(stock_codes, start_date, end_date, cache_dir):
-    """efinance批量下载(多线程, 海外可访问, 比baostock快)"""
-    from data_loader import _download_efinance
-    from concurrent.futures import ThreadPoolExecutor, as_completed
-    import threading
-
-    # 排除已缓存
-    cached = set()
-    for f in os.listdir(cache_dir):
-        if f.endswith('.parquet'):
-            cached.add(f.split('_')[0])
-    need = [c for c in stock_codes if c not in cached]
-
-    if not need:
-        print(f"全部已缓存，无需下载！")
-        return
-
-    print(f"需下载: {len(need)} 只, 已缓存: {len(cached & set(stock_codes))} 只")
-
-    num_workers = 4
-    chunk_size = len(need) // num_workers + 1
-    chunks = [need[i:i + chunk_size] for i in range(0, len(need), chunk_size)]
-
-    # 进度追踪
-    progress_lock = threading.Lock()
-    progress = {'ok': 0, 'fail': 0, 'total': len(need)}
-
-    total_ok = total_fail = 0
-    t0 = time.time()
-
-    def _efinance_worker(codes_chunk, wid):
-        ok = fail = 0
-        for idx, code in enumerate(codes_chunk):
-            cf = Path(cache_dir) / f"{code}_hfq.parquet"
-            if cf.exists():
-                ok += 1
-                continue
-            try:
-                # 用线程超时保护：单只股票最多等30秒
-                result = [None]
-                exc = [None]
-                def _do():
-                    try:
-                        result[0] = _download_efinance(code, start_date, end_date, adjust='hfq', max_retries=1)
-                    except Exception as e:
-                        exc[0] = e
-                t = threading.Thread(target=_do, daemon=True)
-                t.start()
-                t.join(timeout=30)
-                if t.is_alive():
-                    # 超时，跳过这只
-                    fail += 1
-                    with progress_lock:
-                        progress['fail'] += 1
-                    continue
-                if exc[0]:
-                    raise exc[0]
-                df = result[0]
-                if df is not None and len(df) >= 120:
-                    df.to_parquet(cf, index=False)
-                    ok += 1
-                else:
-                    fail += 1
-            except Exception:
-                fail += 1
-            # 进度输出
-            with progress_lock:
-                progress['ok'] += ok
-                progress['fail'] += fail
-                done = progress['ok'] + progress['fail']
-                local_ok, local_fail = ok, fail
-                ok = fail = 0
-                if done % 100 == 0 or done == progress['total']:
-                    elapsed = time.time() - t0
-                    spd = done / elapsed if elapsed > 0 else 0
-                    eta = (progress['total'] - done) / spd / 60 if spd > 0 else 0
-                    print(f"  进度: {done}/{progress['total']} | ok={progress['ok']} fail={progress['fail']} | {spd:.1f}/s | ETA: {eta:.0f}min", flush=True)
-        return wid, ok, fail
-
-    with ThreadPoolExecutor(max_workers=len(chunks)) as executor:
-        futures = {executor.submit(_efinance_worker, chunk, i): i for i, chunk in enumerate(chunks)}
-        for future in as_completed(futures):
-            try:
-                wid, ok, fail = future.result()
-                total_ok += ok
-                total_fail += fail
-                print(f"  Worker {wid}: ok={ok}, fail={fail}")
-            except Exception as e:
-                print(f"  Worker exception: {e}")
-
-    elapsed = time.time() - t0
-    print(f"efinance下载完成: 成功={total_ok}, 失败={total_fail}, 耗时={elapsed/60:.1f}min")
-
-    # efinance失败的，用baostock补充
-    if total_fail > 0:
-        cached2 = set()
-        for f in os.listdir(cache_dir):
-            if f.endswith('.parquet'):
-                cached2.add(f.split('_')[0])
-        still_need = [c for c in stock_codes if c not in cached2]
-        if still_need:
-            print(f"\n--- baostock补充下载 {len(still_need)} 只 ---")
-            _baostock_fallback_download(still_need, start_date, end_date, cache_dir)
-
-
-def _baostock_download_thread(codes_chunk, cache_dir, wid, result_dict, bs_start_date, bs_end_date):
-    """baostock下载线程 - 每个线程独立登录baostock"""
-    import baostock as bs
-    
-    lg = bs.login()
-    if lg.error_code != '0':
-        result_dict[wid] = {'status': 'login_fail', 'ok': 0, 'fail': 0}
-        return
-    
-    ok = fail = 0
-    for code in codes_chunk:
-        cf = Path(cache_dir) / f"{code}_hfq.parquet"
-        if cf.exists():
-            ok += 1
-            continue
-        bs_code = f'sh.{code}' if code.startswith('6') else f'sz.{code}'
-        try:
-            rs = bs.query_history_k_data_plus(
-                bs_code, 'date,open,high,low,close,volume,amount',
-                start_date=bs_start_date, end_date=bs_end_date,
-                frequency='d', adjustflag='1')
-            data = []
-            while (rs.error_code == '0') and rs.next():
-                data.append(rs.get_row_data())
-            if data:
-                df = pd.DataFrame(data, columns=rs.fields)
-                for c in ['open', 'high', 'low', 'close', 'volume', 'amount']:
-                    df[c] = pd.to_numeric(df[c], errors='coerce')
-                df['date'] = pd.to_datetime(df['date'])
-                df = df.dropna(subset=['close']).sort_values('date').reset_index(drop=True)
-                if len(df) >= 120:
-                    df.to_parquet(cf, index=False)
-                    ok += 1
-                else:
-                    fail += 1
-            else:
-                fail += 1
-        except Exception:
-            fail += 1
-    bs.logout()
-    result_dict[wid] = {'status': 'done', 'ok': ok, 'fail': fail}
-
-
-def _baostock_fallback_download(codes, start_date, end_date, cache_dir):
-    """baostock多线程补充下载(慢但稳定)"""
-    from concurrent.futures import ThreadPoolExecutor, as_completed
-
-    bs_end_date = f'{end_date[:4]}-{end_date[4:6]}-{end_date[6:8]}' if len(end_date) == 8 and '-' not in end_date else end_date
-    bs_start_date = f'{start_date[:4]}-{start_date[4:6]}-{start_date[6:8]}' if len(start_date) == 8 and '-' not in start_date else start_date
-
-    num_workers = min(4, max(1, len(codes) // 100 + 1))
-    chunk_size = len(codes) // num_workers + 1
-    chunks = [codes[i:i + chunk_size] for i in range(0, len(codes), chunk_size)]
-
-    print(f"启动 {len(chunks)} 个baostock线程")
-    result_dict = {}
-    t0 = time.time()
-
-    with ThreadPoolExecutor(max_workers=len(chunks)) as executor:
-        futures = {}
-        for i, chunk in enumerate(chunks):
-            future = executor.submit(_baostock_download_thread, chunk, str(cache_dir), i, result_dict, bs_start_date, bs_end_date)
-            futures[future] = i
-
-        total_ok = total_fail = 0
-        for future in as_completed(futures):
-            wid = futures[future]
-            try:
-                future.result()
-            except Exception:
-                pass
-            if wid in result_dict:
-                r = result_dict[wid]
-                if r['status'] == 'done':
-                    total_ok += r['ok']
-                    total_fail += r['fail']
-                    print(f"  Worker {wid} done: ok={r['ok']} fail={r['fail']} | Total: {total_ok}+{total_fail}/{len(codes)} | {(time.time()-t0)/60:.1f}min", flush=True)
-                else:
-                    print(f"  Worker {wid} login failed!", flush=True)
-
-    print(f"baostock补充完成: 成功={total_ok}, 失败={total_fail}, 耗时={(time.time()-t0)/60:.1f}min")
+    # qlib: GitHub托管数据，海外可访问，社区每日更新，纯离线读取
+    print(f"\n--- qlib数据源下载 ---")
+    print(f"数据源: qlib (chenditc/investment_data, GitHub托管)")
+    print(f"日期范围: {start_date} ~ {end_date}")
+    qlib_dir = os.environ.get('QLIB_DATA_DIR', None)
+    ok, fail = qlib_download_batch(
+        stock_codes=stock_codes,
+        start_date=start_date,
+        end_date=end_date,
+        cache_dir=cache_dir,
+        qlib_dir=qlib_dir,
+        adjust='hfq'
+    )
 
 
 # ─── scan ─────────────────────────────────────────────────────────────
@@ -704,7 +417,7 @@ def cmd_predict(code):
 # ─── stocklist ────────────────────────────────────────────────────────
 
 def cmd_stocklist():
-    """更新全A股票列表(优先pytdx, fallback新浪)"""
+    """更新全A股票列表(从qlib获取)"""
     # 强制删除旧缓存，重新获取
     csv_file = BASE_DIR / 'data' / 'full_a_stocks.csv'
     if csv_file.exists():
@@ -720,31 +433,29 @@ def cmd_stocklist():
 # ─── main ─────────────────────────────────────────────────────────────
 
 USAGE = """
-ML主升浪量化策略 v3.0 (多数据源)
-================================
+ML主升浪量化策略 v4.0 (qlib数据源)
+==================================
 
 用法: python run.py <命令> [参数]
 
 命令:
   train          用标注数据训练模型
-  download       批量下载全A数据
+  download       批量下载全A数据(qlib)
   scan           全A扫描(需先download)
   update         一键更新(download + scan)
   predict <代码> 预测单只股票, 如 python run.py predict 000001
   stocklist      更新全A股票列表
 
-数据源(环境变量 DATA_SOURCE):
-  pytdx(默认)    通达信直连，国内最快
-  qlib           GitHub托管数据，海外CI首选，纯离线读取
+数据源:
+  qlib           chenditc/investment_data, GitHub托管，纯离线读取
 
 工作流:
-  国内: python run.py train -> python run.py download -> python run.py scan
-  CI:   DATA_SOURCE=qlib python run.py download -> train -> scan
+  python run.py train -> python run.py download -> python run.py scan
   日常: python run.py update
 
 数据目录:
   data/annotations.csv   标注文件(主升浪区间)
-  data/full_a_stocks.csv 全A股票列表(非qlib模式)
+  data/full_a_stocks.csv 全A股票列表
   data/scan_cache/       日线数据缓存(~5000个parquet)
   models/                LightGBM模型
   signals/               扫描结果(JSON/CSV/HTML)

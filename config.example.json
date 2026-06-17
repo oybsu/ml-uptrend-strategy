@@ -1,6 +1,6 @@
 {
     "data": {
-        "source": "pytdx",
+        "source": "qlib",
         "start_date": "20240101",
         "end_date": "auto",
         "adjust": "hfq",
@@ -44,7 +44,6 @@
     },
     "scan": {
         "top_n": 50,
-        "upcoming_n": 30,
-        "download_workers": 8
+        "upcoming_n": 30
     }
 }
