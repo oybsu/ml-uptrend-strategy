@@ -170,7 +170,12 @@ def cmd_train():
 # ─── download ─────────────────────────────────────────────────────────
 
 def cmd_download():
-    """批量下载全A数据(pytdx多连接并行, 约5-10分钟)"""
+    """批量下载全A数据
+    
+    默认: pytdx(通达信直连, 快) → baostock补充
+    环境变量 DATA_SOURCE=baostock: 直接用baostock(适用于GitHub Actions等海外服务器)
+    """
+    data_source = os.environ.get('DATA_SOURCE', 'pytdx').lower()
     cache_dir = BASE_DIR / 'data' / 'scan_cache'
     cache_dir.mkdir(parents=True, exist_ok=True)
 
@@ -194,36 +199,44 @@ def cmd_download():
         cfg = json.load(f)
     start_date = cfg['data'].get('start_date', '20240101')
 
-    with open(BASE_DIR / 'config.json', 'r', encoding='utf-8') as f:
-        cfg = json.load(f)
-    num_connections = cfg.get('scan', {}).get('download_workers', 8)
+    if data_source == 'baostock':
+        # 直接走baostock(适用于海外服务器/CI环境)
+        print(f"\n--- baostock直接下载 ---")
+        print(f"数据源: baostock (DATA_SOURCE=baostock)")
+        print(f"日期范围: {start_date} ~ {end_date}")
+        _baostock_fallback_download(stock_codes, start_date, end_date, cache_dir)
+    else:
+        # 默认: pytdx主 + baostock补充
+        with open(BASE_DIR / 'config.json', 'r', encoding='utf-8') as f:
+            cfg = json.load(f)
+        num_connections = cfg.get('scan', {}).get('download_workers', 8)
 
-    print(f"\n--- pytdx多连接下载 ---")
-    print(f"数据源: pytdx(通达信直连)")
-    print(f"并行连接数: {num_connections}")
-    print(f"日期范围: {start_date} ~ {end_date}")
-    
-    ok, fail = pytdx_download_batch(
-        stock_codes=stock_codes,
-        start_date=start_date,
-        end_date=end_date,
-        cache_dir=cache_dir,
-        num_connections=num_connections,
-        adjust='hfq'
-    )
-    
-    # pytdx失败的股票，用baostock补充
-    if fail > 0:
-        # 找出仍缺失的
-        cached = set()
-        for f in os.listdir(cache_dir):
-            if f.endswith('.parquet'):
-                cached.add(f.split('_')[0])
+        print(f"\n--- pytdx多连接下载 ---")
+        print(f"数据源: pytdx(通达信直连)")
+        print(f"并行连接数: {num_connections}")
+        print(f"日期范围: {start_date} ~ {end_date}")
         
-        still_need = [c for c in stock_codes if c not in cached]
-        if still_need:
-            print(f"\n--- baostock补充下载 {len(still_need)} 只 ---")
-            _baostock_fallback_download(still_need, start_date, end_date, cache_dir)
+        ok, fail = pytdx_download_batch(
+            stock_codes=stock_codes,
+            start_date=start_date,
+            end_date=end_date,
+            cache_dir=cache_dir,
+            num_connections=num_connections,
+            adjust='hfq'
+        )
+        
+        # pytdx失败的股票，用baostock补充
+        if fail > 0:
+            # 找出仍缺失的
+            cached = set()
+            for f in os.listdir(cache_dir):
+                if f.endswith('.parquet'):
+                    cached.add(f.split('_')[0])
+            
+            still_need = [c for c in stock_codes if c not in cached]
+            if still_need:
+                print(f"\n--- baostock补充下载 {len(still_need)} 只 ---")
+                _baostock_fallback_download(still_need, start_date, end_date, cache_dir)
 
 
 def _baostock_download_thread(codes_chunk, cache_dir, wid, result_dict, bs_start_date, bs_end_date):
