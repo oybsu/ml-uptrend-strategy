@@ -90,6 +90,43 @@ jobs:
             echo "⚠️ 未找到扫描报告" >> $GITHUB_STEP_SUMMARY
           fi
 
+      - name: Convert report to PDF
+        if: always()
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq wkhtmltopdf
+          REPORT="signals/scan_full_a_report.html"
+          if [ -f "$REPORT" ]; then
+            wkhtmltopdf --encoding utf-8 --page-size A4 \
+              --margin-top 10mm --margin-bottom 10mm \
+              --margin-left 10mm --margin-right 10mm \
+              "$REPORT" signals/scan_full_a_report.pdf
+            echo "PDF报告已生成: signals/scan_full_a_report.pdf"
+          else
+            echo "⚠️ 未找到HTML报告，跳过PDF生成"
+          fi
+
+      - name: Upload report to Release
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PDF="signals/scan_full_a_report.pdf"
+          if [ ! -f "$PDF" ]; then
+            echo "⚠️ 未找到PDF报告，跳过Release上传"
+            exit 0
+          fi
+          TAG="scan-$(date +%Y-%m-%d)"
+          TITLE="全A扫描报告 $(date +%Y-%m-%d)"
+          # 如果Release不存在则创建，已存在则更新
+          gh release create "$TAG" "$PDF" \
+            --title "$TITLE" \
+            --notes "ML主升浪策略全A扫描报告 $(date +%Y-%m-%d)" \
+            --repo ${{ github.repository }} 2>/dev/null || \
+          gh release upload "$TAG" "$PDF" \
+            --clobber \
+            --repo ${{ github.repository }}
+          echo "✅ PDF已上传到Release: $TAG"
+
       - name: Upload signals
         if: always()
         uses: actions/upload-artifact@v4
