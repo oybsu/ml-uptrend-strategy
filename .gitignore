@@ -1,0 +1,45 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Data & cache (large files, not for git)
+data/cache/
+data/scan_cache/
+data/labels/
+data/tdx_cache/
+
+# Models (trained model files - all generated, not for git)
+models/
+
+# Signals (generated outputs)
+signals/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Fix/temp files
+fix_*/
+*.zip
+
+# Config with possible secrets
+config.json
+
+# Jupyter
+.ipynb_checkpoints/
