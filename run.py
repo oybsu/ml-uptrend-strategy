@@ -379,15 +379,35 @@ def cmd_update():
 # ─── predict (单只股票) ───────────────────────────────────────────────
 
 def cmd_predict(code):
-    """预测单只股票"""
+    """预测单只股票，无模型则自动训练"""
     from model_trainer import load_latest_model
     from signal_generator import predict_stock
     code = str(code).strip().zfill(6)
     print(f"预测 {code} ...")
+
+    # 检查模型，无则训练
     model, meta = load_latest_model()
     if model is None:
-        print("未找到模型！请先训练")
-        return
+        print("未找到模型，自动训练中...")
+        cmd_train()
+        model, meta = load_latest_model()
+        if model is None:
+            print("训练失败，无法预测")
+            return
+        print("模型训练完成，继续预测")
+
+    # 获取股票名称
+    csv_file = BASE_DIR / 'data' / 'full_a_stocks.csv'
+    stock_name = ''
+    if csv_file.exists():
+        try:
+            df = pd.read_csv(csv_file, encoding='utf-8-sig', dtype={'code': str})
+            df['code'] = df['code'].astype(str).str.zfill(6)
+            name_row = df[df['code'] == code]
+            if not name_row.empty:
+                stock_name = str(name_row.iloc[0]['name'])
+        except Exception:
+            pass
 
     cache_dir = BASE_DIR / 'data' / 'scan_cache'
     price_df = get_stock_data(code, cache_dir=cache_dir)
@@ -401,16 +421,31 @@ def cmd_predict(code):
         return
 
     # 最近20天
+    display_name = f"{code} {stock_name}" if stock_name else code
     recent = pred_df.tail(20)
-    print(f"\n{code} 最近20日预测:")
+    print(f"\n{display_name} 最近20日预测:")
     print(f"{'日期':>12s} | {'概率':>6s} | {'信号':>4s}")
     print("-" * 30)
     for _, row in recent.iterrows():
         sig = {1: '买入', -1: '卖出', 0: '持有'}.get(int(row['signal']), '持有')
         print(f"{str(row['date'])[:10]:>12s} | {row['prob']*100:5.1f}% | {sig}")
 
-    print(f"\n最新概率: {pred_df.iloc[-1]['prob']*100:.1f}%")
-    print(f"最新信号: {int(pred_df.iloc[-1]['signal'])}")
+    latest_prob = pred_df.iloc[-1]['prob']
+    latest_signal = int(pred_df.iloc[-1]['signal'])
+    signal_text = {1: '买入', -1: '卖出', 0: '持有'}.get(latest_signal, '持有')
+
+    if len(pred_df) >= 6:
+        prob_trend = latest_prob - pred_df.iloc[-6]['prob']
+    else:
+        prob_trend = 0
+
+    print(f"\n=== {display_name} 预测结果 ===")
+    print(f"最新概率: {latest_prob*100:.1f}%")
+    print(f"5日趋势: {prob_trend:+.3f}")
+    print(f"最新信号: {signal_text}")
+    if not price_df.empty:
+        print(f"最新价格: {price_df.iloc[-1]['close']:.2f}")
+    print("=" * 30)
 
 
 # ─── stocklist ────────────────────────────────────────────────────────

@@ -1,0 +1,87 @@
+name: Predict Single Stock
+
+on:
+  workflow_dispatch:
+    inputs:
+      stock_code:
+        description: '股票代码（6位数字，如 600519）'
+        required: true
+        type: string
+
+jobs:
+  predict:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate stock code
+        run: |
+          CODE="${{ inputs.stock_code }}"
+          if ! echo "$CODE" | grep -qE '^[0-9]{6}$'; then
+            echo "❌ 股票代码格式错误: $CODE (需要6位数字)"
+            exit 1
+          fi
+          echo "股票代码: $CODE"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Cache pip packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Prepare config
+        run: cp config.example.json config.json
+
+      - name: Cache qlib data
+        uses: actions/cache@v4
+        with:
+          path: ~/.qlib/qlib_data/cn_data
+          key: qlib-data-${{ github.run_id }}
+          restore-keys: |
+            qlib-data-
+
+      - name: Cache models directory
+        uses: actions/cache@v4
+        with:
+          path: models
+          key: ml-models-${{ github.run_id }}
+          restore-keys: |
+            ml-models-
+
+      - name: Predict stock
+        run: |
+          python run.py predict ${{ inputs.stock_code }} 2>&1 | tee predict_output.txt
+
+      - name: Publish prediction result
+        if: always()
+        run: |
+          echo "## 📈 股票预测结果" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          if [ -f predict_output.txt ]; then
+            # 提取 === 结果 === 之后的内容
+            sed -n '/===.*预测结果===/,$ p' predict_output.txt >> $GITHUB_STEP_SUMMARY || \
+            cat predict_output.txt >> $GITHUB_STEP_SUMMARY
+          else
+            echo "预测未完成" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+      - name: Upload model
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: model-predict-${{ github.run_number }}
+          path: models/
+          retention-days: 7
