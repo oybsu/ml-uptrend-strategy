@@ -77,7 +77,7 @@ jobs:
       - name: Download data
         if: ${{ github.event_name == 'schedule' || inputs.run_download == 'true' }}
         env:
-          DATA_SOURCE: baostock
+          DATA_SOURCE: efinance
         run: python run.py download
 
       - name: Train model

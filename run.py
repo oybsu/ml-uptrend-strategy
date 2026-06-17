@@ -199,8 +199,14 @@ def cmd_download():
         cfg = json.load(f)
     start_date = cfg['data'].get('start_date', '20240101')
 
-    if data_source == 'baostock':
-        # 直接走baostock(适用于海外服务器/CI环境)
+    if data_source in ('efinance', 'ef'):
+        # efinance: 东方财富HTTP接口，海外可访问，比baostock快
+        print(f"\n--- efinance直接下载 ---")
+        print(f"数据源: efinance (DATA_SOURCE=efinance)")
+        print(f"日期范围: {start_date} ~ {end_date}")
+        _efinance_batch_download(stock_codes, start_date, end_date, cache_dir)
+    elif data_source == 'baostock':
+        # baostock: 慢但稳定
         print(f"\n--- baostock直接下载 ---")
         print(f"数据源: baostock (DATA_SOURCE=baostock)")
         print(f"日期范围: {start_date} ~ {end_date}")
@@ -237,6 +243,77 @@ def cmd_download():
             if still_need:
                 print(f"\n--- baostock补充下载 {len(still_need)} 只 ---")
                 _baostock_fallback_download(still_need, start_date, end_date, cache_dir)
+
+
+def _efinance_batch_download(stock_codes, start_date, end_date, cache_dir):
+    """efinance批量下载(多线程, 海外可访问, 比baostock快)"""
+    from data_loader import _download_efinance
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    # 排除已缓存
+    cached = set()
+    for f in os.listdir(cache_dir):
+        if f.endswith('.parquet'):
+            cached.add(f.split('_')[0])
+    need = [c for c in stock_codes if c not in cached]
+
+    if not need:
+        print(f"全部已缓存，无需下载！")
+        return
+
+    print(f"需下载: {len(need)} 只, 已缓存: {len(cached & set(stock_codes))} 只")
+
+    num_workers = 4
+    chunk_size = len(need) // num_workers + 1
+    chunks = [need[i:i + chunk_size] for i in range(0, len(need), chunk_size)]
+
+    total_ok = total_fail = 0
+    t0 = time.time()
+
+    def _efinance_worker(codes_chunk, wid):
+        ok = fail = 0
+        for code in codes_chunk:
+            cf = Path(cache_dir) / f"{code}_hfq.parquet"
+            if cf.exists():
+                ok += 1
+                continue
+            try:
+                df = _download_efinance(code, start_date, end_date, adjust='hfq')
+                if df is not None and len(df) >= 120:
+                    df.to_parquet(cf, index=False)
+                    ok += 1
+                else:
+                    fail += 1
+            except Exception:
+                fail += 1
+            # 防止请求过快被限流
+            time.sleep(0.3)
+        return wid, ok, fail
+
+    with ThreadPoolExecutor(max_workers=len(chunks)) as executor:
+        futures = {executor.submit(_efinance_worker, chunk, i): i for i, chunk in enumerate(chunks)}
+        for future in as_completed(futures):
+            try:
+                wid, ok, fail = future.result()
+                total_ok += ok
+                total_fail += fail
+                print(f"  Worker {wid}: ok={ok}, fail={fail}")
+            except Exception as e:
+                print(f"  Worker exception: {e}")
+
+    elapsed = time.time() - t0
+    print(f"efinance下载完成: 成功={total_ok}, 失败={total_fail}, 耗时={elapsed/60:.1f}min")
+
+    # efinance失败的，用baostock补充
+    if total_fail > 0:
+        cached2 = set()
+        for f in os.listdir(cache_dir):
+            if f.endswith('.parquet'):
+                cached2.add(f.split('_')[0])
+        still_need = [c for c in stock_codes if c not in cached2]
+        if still_need:
+            print(f"\n--- baostock补充下载 {len(still_need)} 只 ---")
+            _baostock_fallback_download(still_need, start_date, end_date, cache_dir)
 
 
 def _baostock_download_thread(codes_chunk, cache_dir, wid, result_dict, bs_start_date, bs_end_date):
