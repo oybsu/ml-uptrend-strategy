@@ -40,16 +40,15 @@ def get_end_date():
 def get_all_a_stocks():
     """获取全部A股股票代码列表(排除ST/退市/北交所)
     
-    从qlib数据获取股票列表
+    从qlib数据获取股票列表(自动从CSV补充名称)
     """
-    # 优先CSV缓存
     csv_file = BASE_DIR / 'data' / 'full_a_stocks.csv'
     
-    # 从qlib获取
+    # 从qlib获取(已内置CSV名称补充)
     print("从qlib获取全A列表...", flush=True)
     name_map = qlib_get_stock_list()
     if name_map:
-        # 保存到CSV
+        # 保存到CSV(保留名称)
         df = pd.DataFrame(list(name_map.items()), columns=['code', 'name'])
         df.to_csv(csv_file, index=False, encoding='utf-8-sig')
         print(f"qlib获取成功: {len(name_map)} 只")

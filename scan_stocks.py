@@ -20,8 +20,19 @@ from signal_generator import predict_stock
 
 
 def get_stock_name(code):
-    """获取股票名称(返回空，qlib不提供名称)"""
-    return ''
+    """获取股票名称，从本地CSV读取"""
+    csv_file = BASE_DIR / 'data' / 'full_a_stocks.csv'
+    if not hasattr(get_stock_name, '_name_map'):
+        get_stock_name._name_map = {}
+        if csv_file.exists():
+            try:
+                import pandas as pd
+                df = pd.read_csv(csv_file, encoding='utf-8-sig', dtype={'code': str})
+                df['code'] = df['code'].astype(str).str.zfill(6)
+                get_stock_name._name_map = dict(zip(df['code'].tolist(), df['name'].tolist()))
+            except Exception:
+                pass
+    return get_stock_name._name_map.get(str(code).zfill(6), '')
 
 
 def scan_stocks(stock_codes=None, model=None, meta=None, exclude_codes=None, 

@@ -392,11 +392,10 @@ def qlib_download_batch(stock_codes, start_date='20240101', end_date=None,
 
 
 def qlib_get_stock_list(qlib_dir=None):
-    """从qlib数据获取全A股票列表
+    """从qlib数据获取全A股票列表，并从本地CSV补充股票名称
     
     Returns:
         dict: {code: name} 如 {'600519': '贵州茅台'}
-              如果qlib没有股票名称，name为空字符串
     """
     import qlib
     from qlib.config import REG_CN
@@ -417,6 +416,22 @@ def qlib_get_stock_list(qlib_dir=None):
             # 过滤: 只保留6位数字的主板+创业板+科创板
             if len(code) == 6 and code[0] in '0136':
                 name_map[code] = ''
+        
+        # 从本地CSV补充股票名称
+        csv_file = BASE_DIR / 'data' / 'full_a_stocks.csv'
+        if csv_file.exists():
+            try:
+                df = pd.read_csv(csv_file, encoding='utf-8-sig', dtype={'code': str})
+                df['code'] = df['code'].astype(str).str.zfill(6)
+                csv_names = dict(zip(df['code'].tolist(), df['name'].tolist()))
+                filled = 0
+                for code in name_map:
+                    if csv_names.get(code):
+                        name_map[code] = csv_names[code]
+                        filled += 1
+                print(f"从CSV补充名称: {filled}/{len(name_map)} 只")
+            except Exception as e:
+                print(f"读取股票名称CSV失败: {e}")
         
         print(f"qlib获取全A列表: {len(name_map)} 只")
         return name_map
