@@ -50,22 +50,13 @@ jobs:
       - name: Prepare config
         run: cp config.example.json config.json
 
-      - name: Download data from Release
-        run: |
-          mkdir -p data/scan_cache data/labels
-          gh release download data-latest --repo ${{ github.repository }} --pattern '*.zip' --dir /tmp || true
-          if [ -f /tmp/scan_cache.zip ]; then
-            unzip -o /tmp/scan_cache.zip -d data/scan_cache/
-            echo "Data extracted: $(ls data/scan_cache/*.parquet 2>/dev/null | wc -l) files"
-          else
-            echo "WARNING: No data release found. Run 'python run.py upload' locally first."
-          fi
-          # Also try labels
-          if [ -f /tmp/labels.zip ]; then
-            unzip -o /tmp/labels.zip -d data/labels/
-          fi
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Cache qlib data
+        uses: actions/cache@v4
+        with:
+          path: ~/.qlib/qlib_data/cn_data
+          key: qlib-data-${{ github.run_id }}
+          restore-keys: |
+            qlib-data-
 
       - name: Cache models directory
         uses: actions/cache@v4
@@ -74,6 +65,13 @@ jobs:
           key: ml-models-${{ github.run_id }}
           restore-keys: |
             ml-models-
+
+      - name: Download data
+        if: ${{ github.event_name == 'schedule' || inputs.run_download == 'true' || github.event_name == 'workflow_dispatch' }}
+        timeout-minutes: 30
+        env:
+          DATA_SOURCE: qlib
+        run: python run.py download
 
       - name: Train model
         if: ${{ github.event_name == 'schedule' || inputs.run_train == 'true' }}

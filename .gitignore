@@ -17,6 +17,7 @@ data/cache/
 data/scan_cache/
 data/labels/
 data/tdx_cache/
+data/qlib_data/
 
 # Models (trained model files - all generated, not for git)
 models/

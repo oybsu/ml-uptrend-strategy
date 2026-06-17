@@ -22,7 +22,7 @@ warnings.filterwarnings('ignore')
 BASE_DIR = Path(__file__).parent
 sys.path.insert(0, str(BASE_DIR))
 
-from data_loader import get_stock_data, load_annotations, pytdx_download_batch, pytdx_get_stock_list
+from data_loader import get_stock_data, load_annotations, pytdx_download_batch, pytdx_get_stock_list, qlib_download_batch, qlib_get_stock_list
 
 
 def get_end_date():
@@ -47,7 +47,19 @@ def get_all_a_stocks():
         name_map = dict(zip(df['code'].tolist(), df['name'].tolist()))
         return name_map
 
-    # 1. 尝试pytdx获取
+    # 1. 如果DATA_SOURCE=qlib，优先用qlib获取
+    data_source = os.environ.get('DATA_SOURCE', 'pytdx').lower()
+    if data_source == 'qlib':
+        print("从qlib获取全A列表...", flush=True)
+        name_map = qlib_get_stock_list()
+        if name_map:
+            # 保存缓存(名称为空，后续可补充)
+            df = pd.DataFrame(list(name_map.items()), columns=['code', 'name'])
+            df.to_csv(csv_file, index=False, encoding='utf-8-sig')
+            print(f"qlib获取成功: {len(name_map)} 只")
+            return name_map
+    
+    # 2. 尝试pytdx获取
     print("从pytdx获取全A列表...", flush=True)
     name_map = pytdx_get_stock_list()
     if name_map:
@@ -56,7 +68,7 @@ def get_all_a_stocks():
         print(f"pytdx获取成功: {len(name_map)} 只")
         return name_map
     
-    # 2. fallback: 新浪API
+    # 3. fallback: 新浪API
     print("pytdx获取失败，尝试新浪API...", flush=True)
     import requests as req
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
@@ -199,7 +211,31 @@ def cmd_download():
         cfg = json.load(f)
     start_date = cfg['data'].get('start_date', '20240101')
 
-    if data_source in ('efinance', 'ef'):
+    if data_source == 'qlib':
+        # qlib: GitHub托管数据，海外可访问，社区每日更新
+        print(f"\n--- qlib数据源下载 ---")
+        print(f"数据源: qlib (chenditc/investment_data, GitHub托管)")
+        print(f"日期范围: {start_date} ~ {end_date}")
+        qlib_dir = os.environ.get('QLIB_DATA_DIR', None)
+        ok, fail = qlib_download_batch(
+            stock_codes=stock_codes,
+            start_date=start_date,
+            end_date=end_date,
+            cache_dir=cache_dir,
+            qlib_dir=qlib_dir,
+            adjust='hfq'
+        )
+        # qlib失败的，用baostock补充
+        if fail > 0:
+            cached = set()
+            for f in os.listdir(cache_dir):
+                if f.endswith('.parquet'):
+                    cached.add(f.split('_')[0])
+            still_need = [c for c in stock_codes if c not in cached]
+            if still_need:
+                print(f"\n--- baostock补充下载 {len(still_need)} 只 ---")
+                _baostock_fallback_download(still_need, start_date, end_date, cache_dir)
+    elif data_source in ('efinance', 'ef'):
         # efinance: 东方财富HTTP接口，海外可访问，比baostock快
         print(f"\n--- efinance直接下载 ---")
         print(f"数据源: efinance (DATA_SOURCE=efinance)")
