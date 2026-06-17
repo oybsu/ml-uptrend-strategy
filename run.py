@@ -267,7 +267,7 @@ def cmd_scan():
 
     df = pd.DataFrame(results)
     top = df.nlargest(top_n, 'latest_prob')
-    upcoming_mask = (df['latest_prob'] >= 0.35) & (df['latest_prob'] < 0.50) & (df['prob_trend_5d'] > 0)
+    upcoming_mask = (df['latest_prob'] >= 0.45) & (df['latest_prob'] < 0.60) & (df['prob_trend_5d'] > 0)
     upcoming = df[upcoming_mask].nlargest(upcoming_n, 'prob_trend_5d')
 
     elapsed = time.time() - t0
@@ -331,14 +331,14 @@ tr:nth-child(even){{background:#f9f9f9}}tr:hover{{background:#eaf2f8}}
 <h1>ML主升浪策略 - 全A扫描报告</h1>
 <div class="summary">
 <p><b>扫描范围:</b> 全A股(排除ST/退市/北交所) | <b>成功:</b> {total} 只 | <b>时间:</b> {scan_time}</p>
-<p><b>模型:</b> LightGBM | <b>因子:</b> 123 | <b>阈值:</b> buy=0.45 sell=0.30</p>
+<p><b>模型:</b> LightGBM | <b>因子:</b> 123 | <b>阈值:</b> buy=0.60 sell=0.50</p>
 </div>"""]
 
     parts.append("<h2>TOP 50 主升浪概率最高</h2><table><tr><th>排名</th><th>代码</th><th>名称</th><th>概率</th><th>5日趋势</th><th>最新价</th><th>20日涨幅</th><th>信号</th></tr>")
     for i, r in enumerate(top):
         p, t, ret = r['latest_prob'], r['prob_trend_5d'], r['ret_20d']
         sgs = []
-        if p >= 0.55: sgs.append('<span class="badge badge-high">高概率</span>')
+        if p >= 0.65: sgs.append('<span class="badge badge-high">高概率</span>')
         if t > 0.1: sgs.append('<span class="badge badge-mid">趋势加速</span>')
         if ret > 0.3: sgs.append('<span class="badge badge-strong">强势</span>')
         elif ret > 0.15: sgs.append('<span class="badge badge-low">走强</span>')
@@ -347,7 +347,7 @@ tr:nth-child(even){{background:#f9f9f9}}tr:hover{{background:#eaf2f8}}
         parts.append(f'<tr><td>{i+1}</td><td>{r["code"]}</td><td>{r["name"]}</td><td><b>{p*100:.1f}%</b></td><td class="{tc}">{t:+.3f}</td><td>{r["latest_price"]:.2f}</td><td class="{rc}">{ret*100:+.1f}%</td><td>{" ".join(sgs) or "-"}</td></tr>')
     parts.append('</table>')
 
-    parts.append("<h2>即将启动 (概率0.35-0.50 + 趋势上升)</h2><table><tr><th>排名</th><th>代码</th><th>名称</th><th>概率</th><th>5日趋势</th><th>最新价</th><th>20日涨幅</th></tr>")
+    parts.append("<h2>即将启动 (概率0.45-0.60 + 趋势上升)</h2><table><tr><th>排名</th><th>代码</th><th>名称</th><th>概率</th><th>5日趋势</th><th>最新价</th><th>20日涨幅</th></tr>")
     for i, r in enumerate(upcoming):
         p, t, ret = r['latest_prob'], r['prob_trend_5d'], r['ret_20d']
         tc = 'up' if t > 0 else 'down'
@@ -427,12 +427,12 @@ def cmd_predict(code):
     print(f"{'日期':>12s} | {'概率':>6s} | {'信号':>4s}")
     print("-" * 30)
     for _, row in recent.iterrows():
-        sig = {1: '买入', -1: '卖出', 0: '持有'}.get(int(row['signal']), '持有')
+        sig = {1: '买入', -1: '卖出', 0: '观望', 2: '持有'}.get(int(row['signal']), '观望')
         print(f"{str(row['date'])[:10]:>12s} | {row['prob']*100:5.1f}% | {sig}")
 
     latest_prob = pred_df.iloc[-1]['prob']
     latest_signal = int(pred_df.iloc[-1]['signal'])
-    signal_text = {1: '买入', -1: '卖出', 0: '持有'}.get(latest_signal, '持有')
+    signal_text = {1: '买入', -1: '卖出', 0: '观望', 2: '持有'}.get(latest_signal, '观望')
 
     if len(pred_df) >= 6:
         prob_trend = latest_prob - pred_df.iloc[-6]['prob']

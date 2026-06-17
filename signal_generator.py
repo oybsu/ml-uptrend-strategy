@@ -24,7 +24,7 @@ def generate_signals(prob_series, dates=None, buy_threshold=None, sell_threshold
         min_holding_days: 最小持仓天数
     
     Returns:
-        DataFrame with columns: date, prob, signal (1=buy, -1=sell, 0=hold)
+        DataFrame with columns: date, prob, signal (1=buy, -1=sell, 0=观望, 2=持有)
     """
     if buy_threshold is None:
         buy_threshold = CONFIG['signal']['buy_threshold']
@@ -53,6 +53,7 @@ def generate_signals(prob_series, dates=None, buy_threshold=None, sell_threshold
                     holding = True
                     hold_days = 0
                     buy_idx = i
+            # 未买入：观望
         else:
             hold_days += 1
             # 卖出条件：持仓超过最小天数 + 概率低于卖出阈值
@@ -60,6 +61,9 @@ def generate_signals(prob_series, dates=None, buy_threshold=None, sell_threshold
                 signals[i] = -1
                 holding = False
                 hold_days = 0
+            else:
+                # 持仓中未卖出：持有
+                signals[i] = 2
     
     result = pd.DataFrame({'prob': prob_series, 'signal': signals})
     if dates is not None:

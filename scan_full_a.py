@@ -149,8 +149,8 @@ def scan_stocks_full_a(name_map, model=None, meta=None, exclude_codes=None,
     # TOP N 主升浪概率最高
     top_uptrend = results_df.nlargest(top_n, 'latest_prob')
     
-    # 即将启动：概率在0.35-0.50之间且趋势上升
-    upcoming_mask = (results_df['latest_prob'] >= 0.35) & (results_df['latest_prob'] < 0.50) & (results_df['prob_trend_5d'] > 0)
+    # 即将启动：概率在0.45-0.60之间且趋势上升
+    upcoming_mask = (results_df['latest_prob'] >= 0.45) & (results_df['latest_prob'] < 0.60) & (results_df['prob_trend_5d'] > 0)
     upcoming = results_df[upcoming_mask].nlargest(upcoming_n, 'prob_trend_5d')
     
     elapsed = time.time() - start_time
@@ -200,7 +200,7 @@ tr:hover { background: #eaf2f8; }
 <div class="summary">
 <p><strong>扫描范围:</strong> 全A股（排除ST/退市/北交所） | <strong>成功扫描:</strong> """ + str(total_scanned) + """ 只</p>
 <p><strong>模型:</strong> LightGBM | <strong>因子数:</strong> 123 | <strong>训练样本:</strong> 41只真实标注</p>
-<p><strong>筛选标准:</strong> TOP50主升浪概率 + 30只即将启动(概率0.35-0.50且趋势上升)</p>
+<p><strong>筛选标准:</strong> TOP50主升浪概率 + 30只即将启动(概率0.45-0.60且趋势上升)</p>
 </div>
 """)
     
@@ -212,7 +212,7 @@ tr:hover { background: #eaf2f8; }
         ret = r['ret_20d']
         
         signals = []
-        if prob >= 0.55:
+        if prob >= 0.65:
             signals.append('<span class="badge badge-high">高概率</span>')
         if trend > 0.1:
             signals.append('<span class="badge badge-mid">趋势加速</span>')
@@ -237,7 +237,7 @@ tr:hover { background: #eaf2f8; }
     html_parts.append("</table>")
     
     # 即将启动
-    html_parts.append("<h2>即将启动 (概率0.35-0.50 + 趋势上升)</h2><table><tr><th>排名</th><th>代码</th><th>名称</th><th>概率</th><th>5日趋势</th><th>最新价</th><th>20日涨幅</th></tr>")
+    html_parts.append("<h2>即将启动 (概率0.45-0.60 + 趋势上升)</h2><table><tr><th>排名</th><th>代码</th><th>名称</th><th>概率</th><th>5日趋势</th><th>最新价</th><th>20日涨幅</th></tr>")
     for i, r in enumerate(upcoming):
         prob = r['latest_prob']
         trend = r['prob_trend_5d']
