@@ -1,8 +1,8 @@
-"""数据加载模块 - 支持pytdx(主) + baostock(备) + efinance(兜底)，parquet缓存
+"""数据加载模块 - 支持多数据源，parquet缓存
 
-pytdx: 直连通达信服务器，速度极快（全A约5-10分钟），需自行计算复权
-baostock: 已复权数据，稳定但慢（全A约40分钟）
-efinance: 东方财富接口，不稳定仅作兜底
+DATA_SOURCE=qlib:  从本地qlib二进制数据读取(GitHub托管，海外可访问，纯离线)
+默认(pytdx):       直连通达信服务器，速度极快（全A约5-10分钟），需自行计算复权
+fallback:          baostock(已复权数据) + efinance(东方财富兜底)
 """
 import os
 import time
@@ -803,12 +803,81 @@ def _download_efinance(stock_code, start_date, end_date, adjust='hfq', max_retri
     return None
 
 
+def _download_qlib_single(stock_code, start_date, end_date, adjust='hfq'):
+    """从qlib本地数据读取单只股票日线(不联网)
+    
+    Args:
+        stock_code: 6位代码如 '000001'
+        start_date: YYYYMMDD
+        end_date: YYYYMMDD
+        adjust: 'hfq'
+    
+    Returns:
+        DataFrame or None
+    """
+    import qlib
+    from qlib.config import REG_CN
+    from qlib.data import D
+    
+    qlib_dir = os.environ.get('QLIB_DATA_DIR', None)
+    qlib_data_dir = qlib_ensure_data(qlib_dir)
+    
+    try:
+        qlib.init(provider_uri=str(qlib_data_dir), region=REG_CN)
+    except Exception:
+        pass
+    
+    qlib_code = _raw_code_to_qlib(stock_code)
+    qlib_start = f'{start_date[:4]}-{start_date[4:6]}-{start_date[6:8]}'
+    qlib_end = f'{end_date[:4]}-{end_date[4:6]}-{end_date[6:8]}'
+    
+    try:
+        df = D.features([qlib_code], ['$open', '$high', '$low', '$close', '$volume', '$factor'],
+                       start_time=qlib_start, end_time=qlib_end, freq='day')
+        if df is None or df.empty:
+            return None
+        
+        stock_df = df.loc[qlib_code].copy()
+        stock_df = stock_df.dropna(subset=['$close'])
+        
+        if len(stock_df) < 120:
+            return None
+        
+        result = pd.DataFrame({
+            'date': stock_df.index,
+            'open': stock_df['$open'].values,
+            'high': stock_df['$high'].values,
+            'low': stock_df['$low'].values,
+            'close': stock_df['$close'].values,
+            'volume': stock_df['$volume'].values,
+            'amount': 0
+        })
+        
+        # 后复权
+        if '$factor' in stock_df.columns and adjust == 'hfq':
+            factor = stock_df['$factor'].values
+            last_factor = factor[-1] if len(factor) > 0 else 1.0
+            if last_factor > 0:
+                hfq_ratio = factor / last_factor
+                result['open'] = result['open'] / hfq_ratio
+                result['high'] = result['high'] / hfq_ratio
+                result['low'] = result['low'] / hfq_ratio
+                result['close'] = result['close'] / hfq_ratio
+                result['volume'] = result['volume'] * hfq_ratio
+        
+        result = result.dropna(subset=['close']).sort_values('date').reset_index(drop=True)
+        return result if len(result) >= 120 else None
+    except Exception:
+        return None
+
+
 # ─── 统一接口 ────────────────────────────────────────────────────────
 
 def get_stock_data(stock_code, start_date=None, end_date=None, adjust='hfq', cache_dir=None, max_retries=3):
     """获取单只股票日线数据
     
-    优先级: 缓存 → pytdx → baostock → efinance
+    DATA_SOURCE=qlib: 缓存 → qlib本地数据(不联网)
+    默认: 缓存 → pytdx → baostock → efinance
     
     Args:
         stock_code: 股票代码(6位字符串)，如 '000001'
@@ -854,6 +923,19 @@ def get_stock_data(stock_code, start_date=None, end_date=None, adjust='hfq', cac
         except Exception:
             pass
     
+    # 根据数据源选择获取方式
+    data_source = os.environ.get('DATA_SOURCE', 'pytdx').lower()
+    
+    if data_source == 'qlib':
+        # qlib模式: 从本地qlib数据读取(不联网)
+        df = _download_qlib_single(stock_code, start_date, end_date, adjust)
+        if df is not None and len(df) >= 120:
+            df.to_parquet(cache_file, index=False)
+            mask = (df['date'] >= pd.Timestamp(start_date)) & (df['date'] <= pd.Timestamp(end_date))
+            return df[mask].reset_index(drop=True)
+        return pd.DataFrame()
+    
+    # 默认模式: pytdx → baostock → efinance
     # 1. 尝试pytdx
     df = _download_pytdx(stock_code, start_date, end_date, adjust)
     if df is not None and len(df) >= 120:

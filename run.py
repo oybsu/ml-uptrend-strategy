@@ -2,11 +2,15 @@
 
 用法:
     python run.py train          # 用标注数据训练模型
-    python run.py download       # 批量下载全A数据(pytdx多连接, 约5-10min)
+    python run.py download       # 批量下载全A数据
     python run.py scan           # 全A扫描(需先download)
     python run.py update         # 更新数据+扫描(一键运行)
     python run.py predict 000001 # 预测单只股票
-    python run.py stocklist      # 更新全A股票列表(从pytdx/新浪获取)
+    python run.py stocklist      # 更新全A股票列表
+
+数据源(通过环境变量DATA_SOURCE控制):
+    pytdx(默认): 通达信直连，国内快
+    qlib: GitHub托管数据，海外CI首选，纯离线读取
 """
 import sys
 import os
@@ -185,8 +189,8 @@ def cmd_train():
 def cmd_download():
     """批量下载全A数据
     
+    DATA_SOURCE=qlib: 从qlib本地数据转换(纯离线, CI首选)
     默认: pytdx(通达信直连, 快) → baostock补充
-    环境变量 DATA_SOURCE=baostock: 直接用baostock(适用于GitHub Actions等海外服务器)
     """
     data_source = os.environ.get('DATA_SOURCE', 'pytdx').lower()
     cache_dir = BASE_DIR / 'data' / 'scan_cache'
@@ -213,7 +217,7 @@ def cmd_download():
     start_date = cfg['data'].get('start_date', '20240101')
 
     if data_source == 'qlib':
-        # qlib: GitHub托管数据，海外可访问，社区每日更新
+        # qlib: GitHub托管数据，海外可访问，社区每日更新，纯离线读取
         print(f"\n--- qlib数据源下载 ---")
         print(f"数据源: qlib (chenditc/investment_data, GitHub托管)")
         print(f"日期范围: {start_date} ~ {end_date}")
@@ -226,16 +230,6 @@ def cmd_download():
             qlib_dir=qlib_dir,
             adjust='hfq'
         )
-        # qlib失败的，用baostock补充
-        if fail > 0:
-            cached = set()
-            for f in os.listdir(cache_dir):
-                if f.endswith('.parquet'):
-                    cached.add(f.split('_')[0])
-            still_need = [c for c in stock_codes if c not in cached]
-            if still_need:
-                print(f"\n--- baostock补充下载 {len(still_need)} 只 ---")
-                _baostock_fallback_download(still_need, start_date, end_date, cache_dir)
     elif data_source in ('efinance', 'ef'):
         # efinance: 东方财富HTTP接口，海外可访问，比baostock快
         print(f"\n--- efinance直接下载 ---")
@@ -720,29 +714,31 @@ def cmd_stocklist():
 # ─── main ─────────────────────────────────────────────────────────────
 
 USAGE = """
-ML主升浪量化策略 v2.0 (pytdx版)
+ML主升浪量化策略 v3.0 (多数据源)
 ================================
 
 用法: python run.py <命令> [参数]
 
 命令:
   train          用标注数据训练模型
-  download       批量下载全A数据(pytdx多连接, 约5-10min)
-  scan           全A扫描(需先download, 约30min)
+  download       批量下载全A数据
+  scan           全A扫描(需先download)
   update         一键更新(download + scan)
   predict <代码> 预测单只股票, 如 python run.py predict 000001
   stocklist      更新全A股票列表
 
-工作流:
-  首次使用: python run.py train -> python run.py download -> python run.py scan
-  日常使用: python run.py update
+数据源(环境变量 DATA_SOURCE):
+  pytdx(默认)    通达信直连，国内最快
+  qlib           GitHub托管数据，海外CI首选，纯离线读取
 
-数据源优先级:
-  pytdx(通达信直连, 快) -> baostock(已复权, 稳) -> efinance(兜底)
+工作流:
+  国内: python run.py train -> python run.py download -> python run.py scan
+  CI:   DATA_SOURCE=qlib python run.py download -> train -> scan
+  日常: python run.py update
 
 数据目录:
   data/annotations.csv   标注文件(主升浪区间)
-  data/full_a_stocks.csv 全A股票列表
+  data/full_a_stocks.csv 全A股票列表(非qlib模式)
   data/scan_cache/       日线数据缓存(~5000个parquet)
   models/                LightGBM模型
   signals/               扫描结果(JSON/CSV/HTML)
