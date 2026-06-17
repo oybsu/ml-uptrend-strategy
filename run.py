@@ -38,8 +38,21 @@ def get_end_date():
 def get_all_a_stocks():
     """获取全部A股股票代码列表(排除ST/退市/北交所)
     
-    优先从CSV缓存读取，否则从pytdx获取，最后fallback新浪
+    DATA_SOURCE=qlib: 直接从qlib数据获取(海外CI首选)
+    默认: CSV缓存 → pytdx → 新浪API
     """
+    data_source = os.environ.get('DATA_SOURCE', 'pytdx').lower()
+    
+    # qlib模式: 直接从qlib获取，不走CSV缓存
+    if data_source == 'qlib':
+        print("从qlib获取全A列表...", flush=True)
+        name_map = qlib_get_stock_list()
+        if name_map:
+            print(f"qlib获取成功: {len(name_map)} 只")
+            return name_map
+        print("qlib获取失败，fallback到CSV/pytdx...")
+    
+    # 非qlib模式: 优先CSV缓存
     csv_file = BASE_DIR / 'data' / 'full_a_stocks.csv'
     if csv_file.exists():
         df = pd.read_csv(csv_file, encoding='utf-8-sig', dtype={'code': str})
@@ -47,19 +60,7 @@ def get_all_a_stocks():
         name_map = dict(zip(df['code'].tolist(), df['name'].tolist()))
         return name_map
 
-    # 1. 如果DATA_SOURCE=qlib，优先用qlib获取
-    data_source = os.environ.get('DATA_SOURCE', 'pytdx').lower()
-    if data_source == 'qlib':
-        print("从qlib获取全A列表...", flush=True)
-        name_map = qlib_get_stock_list()
-        if name_map:
-            # 保存缓存(名称为空，后续可补充)
-            df = pd.DataFrame(list(name_map.items()), columns=['code', 'name'])
-            df.to_csv(csv_file, index=False, encoding='utf-8-sig')
-            print(f"qlib获取成功: {len(name_map)} 只")
-            return name_map
-    
-    # 2. 尝试pytdx获取
+    # 尝试pytdx获取
     print("从pytdx获取全A列表...", flush=True)
     name_map = pytdx_get_stock_list()
     if name_map:
@@ -68,7 +69,7 @@ def get_all_a_stocks():
         print(f"pytdx获取成功: {len(name_map)} 只")
         return name_map
     
-    # 3. fallback: 新浪API
+    # fallback: 新浪API
     print("pytdx获取失败，尝试新浪API...", flush=True)
     import requests as req
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
