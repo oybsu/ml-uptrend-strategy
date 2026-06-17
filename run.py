@@ -130,6 +130,12 @@ def cmd_train():
     train_start_date = cfg['data'].get('start_date', '20240101')
     
     print("\n--- 下载标注股票数据 ---")
+    data_source = os.environ.get('DATA_SOURCE', 'pytdx').lower()
+    # qlib模式: download步骤数据在scan_cache，train也用scan_cache
+    if data_source == 'qlib':
+        train_cache_dir = BASE_DIR / 'data' / 'scan_cache'
+    else:
+        train_cache_dir = None  # get_stock_data会用默认的data/cache
     price_dict = {}
     failed = []
     for idx, row in annotations.iterrows():
@@ -137,7 +143,7 @@ def cmd_train():
         name = str(row.get('note', '')).strip()
         print(f"  [{idx+1}/{len(annotations)}] {code} {name}...", end=' ', flush=True)
         # 显式传入start_date，确保pytdx缓存全量数据也被正确截断
-        df = get_stock_data(code, start_date=train_start_date)
+        df = get_stock_data(code, start_date=train_start_date, cache_dir=train_cache_dir)
         if df.empty:
             failed.append(code)
             print("FAIL")

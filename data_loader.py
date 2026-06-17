@@ -803,6 +803,26 @@ def _download_efinance(stock_code, start_date, end_date, adjust='hfq', max_retri
     return None
 
 
+_qlib_initialized = False
+
+def _qlib_ensure_init(qlib_dir=None):
+    """确保qlib已初始化(只初始化一次)"""
+    global _qlib_initialized
+    if _qlib_initialized:
+        return
+    
+    import qlib
+    from qlib.config import REG_CN
+    
+    qlib_data_dir = qlib_ensure_data(qlib_dir)
+    
+    try:
+        qlib.init(provider_uri=str(qlib_data_dir), region=REG_CN)
+    except Exception:
+        pass
+    _qlib_initialized = True
+
+
 def _download_qlib_single(stock_code, start_date, end_date, adjust='hfq'):
     """从qlib本地数据读取单只股票日线(不联网)
     
@@ -815,17 +835,9 @@ def _download_qlib_single(stock_code, start_date, end_date, adjust='hfq'):
     Returns:
         DataFrame or None
     """
-    import qlib
-    from qlib.config import REG_CN
     from qlib.data import D
     
-    qlib_dir = os.environ.get('QLIB_DATA_DIR', None)
-    qlib_data_dir = qlib_ensure_data(qlib_dir)
-    
-    try:
-        qlib.init(provider_uri=str(qlib_data_dir), region=REG_CN)
-    except Exception:
-        pass
+    _qlib_ensure_init()
     
     qlib_code = _raw_code_to_qlib(stock_code)
     qlib_start = f'{start_date[:4]}-{start_date[4:6]}-{start_date[6:8]}'
