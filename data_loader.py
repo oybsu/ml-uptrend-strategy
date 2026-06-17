@@ -915,7 +915,6 @@ def get_stock_data(stock_code, start_date=None, end_date=None, adjust='hfq', cac
             df_since_2024 = df[df['date'] >= pd.Timestamp('2024-01-01')]
             if len(df_since_2024) > 5000:
                 # 分钟线缓存，删除并重新下载
-                import os
                 os.remove(cache_file)
             elif len(df) > 0 and (df['date'].iloc[-1] >= pd.Timestamp(end_date) - pd.Timedelta(days=2)):
                 mask = (df['date'] >= pd.Timestamp(start_date)) & (df['date'] <= df['date'].iloc[-1])
