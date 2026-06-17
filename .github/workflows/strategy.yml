@@ -117,14 +117,17 @@ jobs:
           fi
           TAG="scan-$(date +%Y-%m-%d)"
           TITLE="全A扫描报告 $(date +%Y-%m-%d)"
-          # 如果Release不存在则创建，已存在则更新
-          gh release create "$TAG" "$PDF" \
-            --title "$TITLE" \
-            --notes "ML主升浪策略全A扫描报告 $(date +%Y-%m-%d)" \
-            --repo ${{ github.repository }} 2>/dev/null || \
-          gh release upload "$TAG" "$PDF" \
-            --clobber \
-            --repo ${{ github.repository }}
+          # 检查Release是否已存在
+          if gh release view "$TAG" --repo ${{ github.repository }} >/dev/null 2>&1; then
+            echo "Release $TAG 已存在，更新PDF..."
+            gh release upload "$TAG" "$PDF" --clobber --repo ${{ github.repository }}
+          else
+            echo "创建Release $TAG ..."
+            gh release create "$TAG" "$PDF" \
+              --title "$TITLE" \
+              --notes "ML主升浪策略全A扫描报告 $(date +%Y-%m-%d)" \
+              --repo ${{ github.repository }}
+          fi
           echo "✅ PDF已上传到Release: $TAG"
 
       - name: Upload signals
