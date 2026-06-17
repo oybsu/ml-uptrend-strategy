@@ -249,6 +249,7 @@ def _efinance_batch_download(stock_codes, start_date, end_date, cache_dir):
     """efinance批量下载(多线程, 海外可访问, 比baostock快)"""
     from data_loader import _download_efinance
     from concurrent.futures import ThreadPoolExecutor, as_completed
+    import threading
 
     # 排除已缓存
     cached = set()
@@ -267,18 +268,41 @@ def _efinance_batch_download(stock_codes, start_date, end_date, cache_dir):
     chunk_size = len(need) // num_workers + 1
     chunks = [need[i:i + chunk_size] for i in range(0, len(need), chunk_size)]
 
+    # 进度追踪
+    progress_lock = threading.Lock()
+    progress = {'ok': 0, 'fail': 0, 'total': len(need)}
+
     total_ok = total_fail = 0
     t0 = time.time()
 
     def _efinance_worker(codes_chunk, wid):
         ok = fail = 0
-        for code in codes_chunk:
+        for idx, code in enumerate(codes_chunk):
             cf = Path(cache_dir) / f"{code}_hfq.parquet"
             if cf.exists():
                 ok += 1
                 continue
             try:
-                df = _download_efinance(code, start_date, end_date, adjust='hfq')
+                # 用线程超时保护：单只股票最多等30秒
+                result = [None]
+                exc = [None]
+                def _do():
+                    try:
+                        result[0] = _download_efinance(code, start_date, end_date, adjust='hfq', max_retries=1)
+                    except Exception as e:
+                        exc[0] = e
+                t = threading.Thread(target=_do, daemon=True)
+                t.start()
+                t.join(timeout=30)
+                if t.is_alive():
+                    # 超时，跳过这只
+                    fail += 1
+                    with progress_lock:
+                        progress['fail'] += 1
+                    continue
+                if exc[0]:
+                    raise exc[0]
+                df = result[0]
                 if df is not None and len(df) >= 120:
                     df.to_parquet(cf, index=False)
                     ok += 1
@@ -286,8 +310,18 @@ def _efinance_batch_download(stock_codes, start_date, end_date, cache_dir):
                     fail += 1
             except Exception:
                 fail += 1
-            # 防止请求过快被限流
-            time.sleep(0.3)
+            # 进度输出
+            with progress_lock:
+                progress['ok'] += ok
+                progress['fail'] += fail
+                done = progress['ok'] + progress['fail']
+                local_ok, local_fail = ok, fail
+                ok = fail = 0
+                if done % 100 == 0 or done == progress['total']:
+                    elapsed = time.time() - t0
+                    spd = done / elapsed if elapsed > 0 else 0
+                    eta = (progress['total'] - done) / spd / 60 if spd > 0 else 0
+                    print(f"  进度: {done}/{progress['total']} | ok={progress['ok']} fail={progress['fail']} | {spd:.1f}/s | ETA: {eta:.0f}min", flush=True)
         return wid, ok, fail
 
     with ThreadPoolExecutor(max_workers=len(chunks)) as executor:

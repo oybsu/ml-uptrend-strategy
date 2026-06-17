@@ -76,6 +76,7 @@ jobs:
 
       - name: Download data
         if: ${{ github.event_name == 'schedule' || inputs.run_download == 'true' }}
+        timeout-minutes: 60
         env:
           DATA_SOURCE: efinance
         run: python run.py download
