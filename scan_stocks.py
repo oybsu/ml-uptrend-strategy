@@ -141,8 +141,8 @@ def scan_stocks(stock_codes=None, model=None, meta=None, exclude_codes=None,
     # TOP N 主升浪概率最高
     top_uptrend = results_df.nlargest(top_n, 'latest_prob')
     
-    # 即将启动：概率在0.45-0.60之间且趋势上升
-    upcoming_mask = (results_df['latest_prob'] >= 0.45) & (results_df['latest_prob'] < 0.60) & (results_df['prob_trend_5d'] > 0)
+    # 即将启动：概率在0.40-0.55之间且趋势上升
+    upcoming_mask = (results_df['latest_prob'] >= 0.40) & (results_df['latest_prob'] < 0.55) & (results_df['prob_trend_5d'] > 0)
     upcoming = results_df[upcoming_mask].nlargest(upcoming_n, 'prob_trend_5d')
     
     return {

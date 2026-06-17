@@ -37,10 +37,10 @@
         "num_boost_round": 500
     },
     "signal": {
-        "buy_threshold": 0.60,
-        "sell_threshold": 0.50,
-        "consecutive_days": 2,
-        "min_holding_days": 5
+        "buy_threshold": 0.55,
+        "sell_threshold": 0.45,
+        "consecutive_days": 3,
+        "min_holding_days": 3
     },
     "scan": {
         "top_n": 50,
