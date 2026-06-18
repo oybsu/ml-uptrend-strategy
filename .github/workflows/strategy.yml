@@ -26,6 +26,8 @@ on:
 jobs:
   pipeline:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write   # 允许创建 Release 和上
     steps:
       - uses: actions/checkout@v4
 
